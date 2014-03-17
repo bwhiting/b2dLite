@@ -88,6 +88,8 @@ package
 
 
 In the above example you can check out performance by adding the following line after the comment "//draw stuff":
+
+
 for (var i:int = 0; i < 5000; i++)	b2d.renderQuad(2, 2, Math.random() * 512, Math.random() * 512, texture);
 
 
