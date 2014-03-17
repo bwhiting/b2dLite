@@ -1,7 +1,7 @@
 b2dLite
 =======
 
-A quick and dirty stage3d quad rendering engine
+A quick and dirty stage3d quad rendering engine. It will batch your draw calls automatically, so to take advantage of it fully USE SPRITESHEETS and draw objects with the same textures together and you should be golden.
 
 
 
