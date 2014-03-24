@@ -34,7 +34,7 @@ To use this class do the following:
 
 Example App
 
-
+```actionscript3
 package
 {
 	import com.bwhiting.b2d.b2dLite;
@@ -85,12 +85,12 @@ package
 		}		
 	}	
 }
-
+```
 
 In the above example you can check out performance by adding the following line after the comment "//draw stuff":
 
-
+```actionscript3
 for (var i:int = 0; i < 5000; i++)	b2d.renderQuad(2, 2, Math.random() * 512, Math.random() * 512, texture);
-
+```
 
 On my mid-range machine I can crank that number up to 15000 and still hit 60fps no probs
