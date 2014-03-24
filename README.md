@@ -34,7 +34,7 @@ To use this class do the following:
 
 Example App
 
-
+```actionscript3
 package
 {
 	import com.bwhiting.b2d.b2dLite;
@@ -85,7 +85,7 @@ package
 		}		
 	}	
 }
-
+```
 
 In the above example you can check out performance by adding the following line after the comment "//draw stuff":
 
