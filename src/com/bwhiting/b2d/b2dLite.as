@@ -1,7 +1,6 @@
 package com.bwhiting.b2d 
 {
 	import flash.display.BitmapData;
-	import flash.display.BlendMode;
 	import flash.display.Stage;
 	import flash.display.Stage3D;
 	import flash.display3D.Context3D;
@@ -18,13 +17,15 @@ package com.bwhiting.b2d
 	import flash.geom.Matrix;
 	import flash.utils.ByteArray;
 	import flash.utils.Endian;
+		
 	
 	/**
 	 * ...
 	 * @author bwhiting
 	 */
-	public class b2dLite 
+	public final class b2dLite 
 	{
+		
 		//callback
 		private var _onReady			:Function; 
 		
@@ -63,20 +64,35 @@ package com.bwhiting.b2d
 		//utils
 		private var matrix				:Matrix = new Matrix();
 		
-		//pool of draw calls, perhaps bytearray could be used with fastmem + writeBytes for faster GPU
-		private var drawCallPool		:Vector.<Number>;
-		private var drawCallPoolIndex	:int;
-
 		//register shizzle
 		private var _numRegisters			:int = 128;
 		private var _registersPerInstance	:int = 2;
 		private var _registerUseage			:int = 0;
 		private var _maxInstances			:int = 0;		
 		
-		public function b2dLite(antiAlias:uint = 4)
+		private var clipping:int;
+		private var clippingLeft:Number;
+		private var clippingRight:Number;
+		private var clippingWidth:Number;
+		private var clippingHeight:Number;
+		private var clippingTop:Number;
+		private var clippingBottom:Number;
+		private var maskLeft:int = 1<<0;
+		private	var maskRight:int = 1<<1;
+		private	var maskTop:int = 1<<2;
+		private	var maskBottom:int = 1<<3;
+		
+		private var count:int;
+		private var offset:int;
+		
+		
+		/**
+		* This class can be used to render quads quickly on the GPU
+		*@param antiAlias The first number to add
+		*/
+		public function b2dLite(antiAlias:uint = 0)
 		{
 			_antiAlias = antiAlias;
-			drawCallPool = new Vector.<Number>();
 		}
 		
 		public function initializeFromStage(stage:Stage, onReady:Function, width:Number = NaN, height:Number = NaN):void
@@ -91,6 +107,7 @@ package com.bwhiting.b2d
 			_stage3D.addEventListener(Event.CONTEXT3D_CREATE, onContext);
 			_stage3D.requestContext3D();
 		}
+		
 		public function initializeFromContext(context:Context3D, width:Number, height:Number):void
 		{
 			_context3D = context;
@@ -149,15 +166,25 @@ package com.bwhiting.b2d
         	var decodeFragment:Array = [-96,1,0,0,0,-95,1,40,0,0,0,0,0,15,3,0,0,0,-28,4,0,0,0,0,0,0,0,5,0,16,16];
 			var decodeVertex:Array = [-96,1,0,0,0,-95,0,0,0,0,0,0,0,15,2,0,0,0,-28,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,3,2,2,0,0,84,0,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,0,3,2,0,0,0,84,2,0,0,0,1,0,0,84,1,2,0,-128,1,0,0,0,0,0,3,2,0,0,0,84,2,0,0,0,1,0,0,-2,1,2,0,-128,0,0,0,0,0,0,15,3,0,0,0,-28,2,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,0,3,2,1,0,0,84,0,0,0,0,1,0,0,84,1,2,1,-128,1,0,0,0,0,0,15,4,0,0,0,84,2,0,0,0,1,0,0,-2,1,2,1,-128];		
 			
-			var fragmentProgram:ByteArray = new ByteArray;
+			var fragmentProgram:ByteArray = new ByteArray();
 			fragmentProgram.endian = Endian.LITTLE_ENDIAN;
-			for (var i:int = 0; i < decodeFragment.length; i++) fragmentProgram.writeByte(decodeFragment[i]); fragmentProgram.position = 0;
-            var vertexProgram:ByteArray = new ByteArray;
+			for (i = 0; i < decodeFragment.length; i++) fragmentProgram.writeByte(decodeFragment[i]); fragmentProgram.position = 0;
+            var vertexProgram:ByteArray = new ByteArray();
 			vertexProgram.endian = Endian.LITTLE_ENDIAN;
-			for (var i:int = 0; i < decodeVertex.length; i++) vertexProgram.writeByte(decodeVertex[i]); vertexProgram.position = 0;
+			for (i = 0; i < decodeVertex.length; i++) vertexProgram.writeByte(decodeVertex[i]); vertexProgram.position = 0;
 						
 			_quadProgram = _context3D.createProgram();
 			_quadProgram.upload(vertexProgram, fragmentProgram);
+			
+			resetState();
+			
+			if(_onReady)	_onReady();
+		}
+		
+		public function resetState():void
+		{
+			//clear texture
+			_texture = null;
 			
 			//set buffers
 			_context3D.setVertexBufferAt(0, _quadPositionBuffer, 0, Context3DVertexBufferFormat.FLOAT_2);
@@ -166,70 +193,148 @@ package com.bwhiting.b2d
 			
 			//set program
 			_context3D.setProgram(_quadProgram);
-			
-			if(_onReady)	_onReady();
 		}
+		
+		/**
+		* Clear the back buffer with a given colour and alpha
+		*@param r red (0-1)
+		*@param g green (0-1)
+		*@param b blue (0-1)
+		*@param a alpha (0-1)
+		*/
 		public function clear(r:Number = 0, g:Number = 0, b:Number = 0, a:Number = 1):void
 		{
 			_context3D.clear(r, g, b, a);
 		}
+		
+		/**
+		* Present the backbuffer to the screen
+		*/
 		public function present():void
 		{
+
+			//clear any leftovers
 			flush();
 			_context3D.present();
 		}
-		public final function renderQuad(width:Number, height:Number, x:Number, y:Number, texture:Texture, textureScaleX:Number = 1, textureScaleY:Number = 1, textureOffsetX:Number = 0,  textureOffsetY:Number = 0):void
+		
+		/**
+		* Renders any leftover quads in the queue
+		*/
+		public function flush():void
+		{
+			if (count)
+			{
+				_context3D.setProgramConstantsFromVector(Context3DProgramType.VERTEX, 0, _vertexConstants);
+				_context3D.drawTriangles(_quadIndexBuffer, 0, count * 2);
+				count = 0;
+				offset = 0;
+			}
+		}
+		
+		/**
+		* Sets a clipping rectangle to be used in all subsequent render calls
+		*/
+		public function setClippingRectangle(x:Number, y:Number, width:Number, height:Number):void
+		{
+			clippingLeft = x;
+			clippingRight = x + width;
+			clippingTop = y;
+			clippingBottom = y + height;
+			clippingWidth = width;
+			clippingHeight = height;
+			clipping = 1;
+		}
+		/**
+		* Clears the clipping rectangle
+		*/
+		public function clearClippingRectangle():void
+		{
+			clipping = 0;
+		}
+		public function renderQuad(width:Number, height:Number, x:Number, y:Number, texture:Texture, textureScaleX:Number = 1, textureScaleY:Number = 1, textureOffsetX:Number = 0,  textureOffsetY:Number = 0):void
 		{
 			if (texture != _texture)
 			{
 				flush();
 				_texture = texture;
 				_context3D.setTextureAt(0, _texture);				
-			}			
-			var index:int = drawCallPoolIndex;
-			drawCallPool[drawCallPoolIndex] 		= x - _width * 0.5;
-			drawCallPool[int(drawCallPoolIndex + 1)] = y - _height * 0.5;
-			drawCallPool[int(drawCallPoolIndex + 2)] = width;
-			drawCallPool[int(drawCallPoolIndex + 3)] = height;
-			drawCallPool[int(drawCallPoolIndex + 4)] = textureScaleX;
-			drawCallPool[int(drawCallPoolIndex + 5)] = textureScaleY;
-			drawCallPool[int(drawCallPoolIndex + 6)] = textureOffsetX;
-			drawCallPool[int(drawCallPoolIndex + 7)] = textureOffsetY;			
-			drawCallPoolIndex += 8;
-		}
-		private function flush():void
-		{
-			var offset:int = 0;
-			var num:int = 0;
-			
-			for (var i:int = 0; i < drawCallPoolIndex; i+=8 )
+			}		
+
+			if (clipping)
 			{
-				num++;
-				_vertexConstants[offset] 		= drawCallPool[int(i + 2)] / _width;
-				_vertexConstants[int(offset + 1)] = drawCallPool[int(i + 3)] / _height;
-				_vertexConstants[int(offset + 2)] = (drawCallPool[i] / _width) * 2;
-				_vertexConstants[int(offset + 3)] = -(drawCallPool[int(i + 1)] / _height) * 2;
-				_vertexConstants[int(offset + 4)] = drawCallPool[int(i + 4)];
-				_vertexConstants[int(offset + 5)] = drawCallPool[int(i + 5)];
-				_vertexConstants[int(offset + 6)] = drawCallPool[int(i + 6)];
-				_vertexConstants[int(offset + 7)] = drawCallPool[int(i + 7)];
+				var clipped:Boolean = false;
+				var halfWidth:Number = width * 0.5;
+				var halfHeight:Number = height * 0.5;
+				var left:Number = x - halfWidth;
+				var right:Number = x + halfWidth;
+				var top:Number = y - halfHeight;
+				var bottom:Number = y + halfHeight;
 				
-				offset += 8;
+				if (left > clippingRight || right < clippingLeft || top > clippingBottom || bottom < clippingTop)	return;	//don't draw as completely clipped
+
+				var clippingMask:int = 0;
 				
-				if (num > _maxInstances - 1)
+				//clip right
+				if (right > clippingRight)
 				{
-					_context3D.setProgramConstantsFromVector(Context3DProgramType.VERTEX, 0, _vertexConstants);
-					_context3D.drawTriangles(_quadIndexBuffer, 0, num * 2);
-					num = 0;
-					offset = 0;
+					right = clippingRight;
+					clippingMask |= maskRight;
 				}
-			}			
-			if (num)
+				//clip left
+				if (left < clippingLeft)
+				{
+					left = clippingLeft;
+					clippingMask |= maskLeft;
+				}
+				//clip top
+				if (top < clippingTop)
+				{
+					top = clippingTop;
+					clippingMask |= maskTop;
+				}
+				//clip bottom
+				if (bottom > clippingBottom)
+				{
+					bottom = clippingBottom;
+					clippingMask |= maskBottom;
+				}
+				
+				if (clippingMask)
+				{
+					var newWidth:Number = right - left;
+					var newHeight:Number = bottom - top;
+					textureScaleX *= newWidth / width;
+					textureScaleY *= newHeight / height;
+
+					if (clippingMask & maskLeft)	textureOffsetX -= newWidth / width;
+					if(clippingMask & maskTop)		textureOffsetY -= newHeight / height;
+					//new x and y
+					width = newWidth;
+					height = newHeight;
+					x = left + (width * 0.5);
+					y = top + (height * 0.5);
+				}				
+			}
+			
+			_vertexConstants[offset] 		= width / _width;								//2
+			_vertexConstants[int(offset + 1)] = height / _height;							//3
+			_vertexConstants[int(offset + 2)] = ((x - _width * 0.5) / _width) * 2;			//0
+			_vertexConstants[int(offset + 3)] = -((y - _height * 0.5) / _height) * 2;		//1
+			_vertexConstants[int(offset + 4)] = textureScaleX;								//4
+			_vertexConstants[int(offset + 5)] = textureScaleY;								//5
+			_vertexConstants[int(offset + 6)] = textureOffsetX;								//6
+			_vertexConstants[int(offset + 7)] = textureOffsetY;								//7
+					
+			offset += 8;			
+			
+			if (++count > _maxInstances - 1)
 			{
 				_context3D.setProgramConstantsFromVector(Context3DProgramType.VERTEX, 0, _vertexConstants);
-				_context3D.drawTriangles(_quadIndexBuffer, 0, num * 2);
-			}
-			drawCallPoolIndex = 0;		
+				_context3D.drawTriangles(_quadIndexBuffer, 0, count * 2);
+				count = 0;
+				offset = 0;
+			}	
 		}
 		public function createTexture(image:BitmapData):Texture
 		{
